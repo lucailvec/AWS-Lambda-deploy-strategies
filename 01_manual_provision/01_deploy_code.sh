@@ -1,0 +1,1 @@
+python3 util.py --bucket-name ${BUCKET_NAME} --region ${REGION} --action provision-code && echo "Code deploy successfull"
