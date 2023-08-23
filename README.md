@@ -94,6 +94,16 @@ Now we can interact with our api with one of our favorite tool (for us curl):
 
 # `/01_manual_provision`
 
+There are two possibilities to deploy a lambda function: with a custom container image or a S3. 
+
+![The stack](./01_manual_provision/lambda deploy manual.jpg)
+
+The plan:
+1. Build a zip file
+2. upload the zip file onto a bucket
+3. link the position of this file and build a template.yml
+4. deploy the stack
+
 Cons:
 - Managing the zip file
 - While deprovision all resource of a stack is made monolitich by CloudFormation, deleting the source code and delete the bucket is done by hand...so another piece of code to mantain
