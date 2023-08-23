@@ -1,0 +1,194 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Manual provisioning of resource that will contains lambda function and link manually in the template the aws resource of s3 bucket
+
+Resources:
+  Database:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName:
+        !Join [ "", [ TodoAppDatabase, !Select [ 2, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]]]
+      AttributeDefinitions:
+        - AttributeName: uuid
+          AttributeType: S
+      KeySchema:
+        - AttributeName: uuid
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+  LambdaFunctionRestApi:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName:
+        !Join [ "", [ LambdaFunctionRestApi, !Select [ 2, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]]]
+      Role: !GetAtt TodoListLambdaReadWriteDynamoRole.Arn
+      Code:
+        S3Bucket: "todo-app-lv-123"
+        S3Key: "function.zip"
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      PackageType: Zip
+      Environment:
+        Variables:
+          DYNAMODB_TABLE_NAME: !Select [1, !Split ["/", !GetAtt Database.Arn]]
+
+  ApiGatewayRestApi:
+    Type: "AWS::ApiGateway::RestApi"
+    Properties:
+      Name: !Join ["", [TodoAppRestApi, !Select [ 2, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]] ]   ]  ]
+      ApiKeySourceType: "HEADER"
+      EndpointConfiguration: 
+        Types: 
+          - "REGIONAL"
+  ApiGatewayResourceApi:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      PathPart: "api"
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+  ApiGatewayResourceNote:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      PathPart: "note"
+      ParentId: !Ref ApiGatewayResourceApi
+  ApiGatewayResource2:
+    Type: "AWS::ApiGateway::Resource"
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      PathPart: "{note-id}"
+      ParentId: !Ref ApiGatewayResourceNote
+  ApiGatewayMethodGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: GET
+      ResourceId: !Ref ApiGatewayResourceNote
+      RestApiId: !Ref ApiGatewayRestApi
+      Integration:
+        ContentHandling: CONVERT_TO_TEXT
+        Credentials: !GetAtt TodoListApiGatewayRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        Type: AWS_PROXY
+        Uri: !Join ['', [!Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/', !GetAtt LambdaFunctionRestApi.Arn , '/invocations']]
+  ApiGatewayMethodPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResourceNote
+      RestApiId: !Ref ApiGatewayRestApi
+      Integration:
+        ContentHandling: CONVERT_TO_TEXT
+        Credentials: !GetAtt TodoListApiGatewayRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        Type: AWS_PROXY
+        Uri: !Join ['', [!Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/', !GetAtt LambdaFunctionRestApi.Arn , '/invocations']]    
+  ApiGatewayMethodGetNoteAny:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: NONE
+      HttpMethod: POST
+      ResourceId: !Ref ApiGatewayResource2
+      RestApiId: !Ref ApiGatewayRestApi
+      Integration:
+        ContentHandling: CONVERT_TO_TEXT
+        Credentials: !GetAtt TodoListApiGatewayRole.Arn
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        Type: AWS_PROXY
+        Uri: !Join ['', [!Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/', !GetAtt LambdaFunctionRestApi.Arn , '/invocations']]   
+
+  TodoListApiGatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        !Join ["", [ TodoListApiGatewayRole, !Select [ 2, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]]]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - "apigateway.amazonaws.com"
+            Action:
+              - sts:AssumeRole
+
+  ApiGatewayFirstDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      Description: The first deploy
+    DependsOn:
+      - ApiGatewayMethodGetNoteAny
+      - ApiGatewayMethodPost
+      - ApiGatewayMethodGet
+  
+  ApiGatewayStageProd:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: prod
+      DeploymentId: !GetAtt ApiGatewayFirstDeployment.DeploymentId
+      RestApiId: !Ref ApiGatewayRestApi
+      
+  TodoListApiGatewayPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: "Grant permission for call lambda"
+      ManagedPolicyName:
+        !Join [ "", [ TodoListApiGatewayPolicy, !Select [ 2, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]]]
+      Roles:
+        - !Ref TodoListApiGatewayRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "lambda:InvokeFunction"
+            Effect: Allow
+            Resource:
+              - !GetAtt LambdaFunctionRestApi.Arn
+
+  TodoListLambdaReadWriteDynamoRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        !Join [ "", [ TodoListLambdaReadWriteDynamoRole, !Select [ 2, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]]]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: [sts:AssumeRole]
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  TodoListLambdaReadWriteDynamoPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: "CRUD acess to the dynamodb table"
+      ManagedPolicyName:
+        !Join [ "", [ TodoListLambdaReadWriteDynamoPolicy,  !Select [ 2, !Split ["-", !Select [2, !Split ["/", !Ref AWS::StackId]]]]]]
+      Roles:
+        - !Ref TodoListLambdaReadWriteDynamoRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "dynamodb:DeleteItem"
+              - "dynamodb:UpdateItem"
+              - "dynamodb:CreateItem"
+              - "dynamodb:PutItem"
+              - "dynamodb:GetItem"
+              - "dynamodb:Scan"
+              - "dynamodb:Query"
+            Effect: Allow
+            Resource:
+              - !Join ["", [!GetAtt Database.Arn, "/*"]]
+              - !GetAtt Database.Arn
+Outputs:
+  Endpoint:
+    Value: !Join ['', ['https://', !Ref ApiGatewayRestApi, !Sub 'execute-api.${AWS::Region}.amazonaws.com/prod/api/note/']]
